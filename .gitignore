@@ -1,0 +1,7 @@
+# Never commit the App's private key. It is the one secret in this scheme and
+# this repo is public.
+*.pem
+
+# Release build output
+out/
+pi-git-auth.tar.gz

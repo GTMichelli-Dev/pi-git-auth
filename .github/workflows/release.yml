@@ -1,0 +1,155 @@
+name: Release
+
+# Publishes the bootstrap scripts as release assets, so a Pi with curl and no
+# git can fetch them, and so a rollout can pin a version instead of taking
+# whatever main says that day.
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Nothing is compiled here - these are shell scripts. The job exists to
+# assemble them into one tarball, prove they are syntactically valid and carry
+# no private key, and write the notes.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, without the leading v (e.g. 1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $VERSION"
+
+      - name: Assemble the package
+        run: |
+          set -euo pipefail
+          # Flat, not scripts/ - setup-pi-github-app.sh looks for its helpers
+          # in its own directory, so the extracted layout has to put them
+          # side by side.
+          mkdir -p out
+          cp scripts/*.sh out/
+          cp README.md out/README.md
+          chmod +x out/*.sh
+          tar -czf pi-git-auth.tar.gz -C out .
+          ls -lh pi-git-auth.tar.gz out/
+
+      - name: Check the package
+        run: |
+          set -euo pipefail
+
+          # The installer refuses to run without these beside it, so a tarball
+          # missing one is a package that fails on the Pi rather than here.
+          for f in setup-pi-github-app.sh michelli-github-app-token.sh \
+                   git-credential-michelli.sh pi-connect-github-auth.sh; do
+            test -f "out/$f" || { echo "::error::$f missing from the package"; exit 1; }
+            bash -n "out/$f"  || { echo "::error::$f is not valid bash";        exit 1; }
+          done
+
+          # A private key must never ship. This repo is public, and a PEM
+          # committed here would be published to the world - the one secret in
+          # the whole scheme, handed out with the installer that uses it.
+          if grep -rlE -- "-----BEGIN [A-Z ]*PRIVATE KEY-----" out/ | grep -q .; then
+            echo "::error::A private key leaked into the package."
+            grep -rlE -- "-----BEGIN [A-Z ]*PRIVATE KEY-----" out/
+            exit 1
+          fi
+          if find . -name "*.pem" -not -path "./.git/*" | grep -q .; then
+            echo "::error::A .pem file is committed to this repo."
+            find . -name "*.pem" -not -path "./.git/*"
+            exit 1
+          fi
+
+          # The installer is useless if it cannot find its own defaults.
+          grep -q '^CLIENT_ID_DEFAULT="Iv23' out/setup-pi-github-app.sh \
+            || { echo "::error::CLIENT_ID_DEFAULT is not baked in"; exit 1; }
+          grep -q '^APP_ID_DEFAULT="4260960"' out/setup-pi-github-app.sh \
+            || { echo "::error::APP_ID_DEFAULT is not baked in"; exit 1; }
+
+          echo "Package OK"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          NOTES=$(cat <<EOF
+          Bootstrap scripts that let a Raspberry Pi clone and pull private
+          GTMichelli-Dev repos through the org's **michelli-fleet** GitHub App.
+          No personal access tokens, no SSH keys, no per-Pi GitHub accounts.
+
+          Full walkthrough:
+          https://github.com/${GITHUB_REPOSITORY}/blob/main/README.md
+
+          ## Pi Connect web shell (one Pi, paste-only)
+
+          \`\`\`
+          curl -fsSL -o /tmp/gh-auth.sh https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/pi-connect-github-auth.sh
+          bash /tmp/gh-auth.sh </dev/tty
+          \`\`\`
+
+          Asks for the Installation ID, takes the PEM as a paste, and runs the
+          installer for you.
+
+          ## From this release (curl, no git on the Pi yet)
+
+          \`\`\`
+          curl -fsSL -o pga.tar.gz https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/pi-git-auth.tar.gz
+          mkdir -p /tmp/pga && tar -xzf pga.tar.gz -C /tmp/pga
+          sudo bash /tmp/pga/setup-pi-github-app.sh --install-id 145563826 --pem /path/to/michelli-app.pem
+          \`\`\`
+
+          **Take the tarball, not a single script.**
+          \`setup-pi-github-app.sh\` installs \`michelli-github-app-token.sh\`
+          and \`git-credential-michelli.sh\` from alongside itself and stops
+          with an error if they are not there. The individual scripts are
+          attached for reading, and for replacing one helper on a Pi that is
+          already set up.
+
+          ## Verify
+
+          \`\`\`
+          git ls-remote https://github.com/GTMichelli-Dev/pi-network-setup.git HEAD
+          \`\`\`
+
+          A SHA with no password prompt means it worked. Test against a
+          **private** repo — this one, \`foundation\`, \`web-print-service\`
+          and \`scale-reader-service\` are public and answer without the
+          credential helper being involved at all, so they succeed even on a
+          Pi where the whole thing failed.
+
+          ---
+
+          You supply two things: the Installation ID (\`145563826\` for the
+          current org installation) and the App's PEM private key. The PEM is
+          never committed here — this repo is public.
+          EOF
+          )
+
+          gh release create "v$V" \
+            --title "v$V" \
+            --notes "$NOTES" \
+            pi-git-auth.tar.gz \
+            scripts/setup-pi-github-app.sh \
+            scripts/michelli-github-app-token.sh \
+            scripts/git-credential-michelli.sh \
+            scripts/pi-connect-github-auth.sh
