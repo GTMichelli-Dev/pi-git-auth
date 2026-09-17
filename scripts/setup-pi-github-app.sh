@@ -93,11 +93,17 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-# 1. Apt-install deps if missing.
+# 1. Apt-install deps if missing. git is one of them: step 6 registers the
+#    credential helper with `git config --system` and step 7 smoke-tests with
+#    `git ls-remote`. It used to be safe to assume — every route here went
+#    through something that had already installed it — until install.sh
+#    started fetching over curl. A Pi OS Lite box with no git is exactly the
+#    box this runs on.
 need_apt=()
 command -v curl    >/dev/null 2>&1 || need_apt+=(curl)
 command -v jq      >/dev/null 2>&1 || need_apt+=(jq)
 command -v openssl >/dev/null 2>&1 || need_apt+=(openssl)
+command -v git     >/dev/null 2>&1 || need_apt+=(git)
 if [[ ${#need_apt[@]} -gt 0 ]]; then
   echo "Installing: ${need_apt[*]}"
   apt-get update -qq

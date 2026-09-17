@@ -121,6 +121,45 @@ jobs:
           sudo shred -u /tmp/fake.pem /etc/michelli/github-app.pem
           echo "install.sh OK - failed at the token mint, as an unknown key should"
 
+      - name: Prove it works on a box with no git
+        run: |
+          set -euo pipefail
+          # The runner has git, curl, jq and openssl preinstalled, so the step
+          # above cannot see a missing dependency - which is how v1.1.0 shipped
+          # with setup-pi-github-app.sh calling `git config --system` on a box
+          # that had no git. A bare Debian container is the fleet's actual
+          # starting condition: Pi OS Lite with nothing added.
+          openssl genrsa -out out/fake.pem 2048 2>/dev/null
+
+          cat > out/ci-nogit-test.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if command -v git >/dev/null 2>&1; then
+            echo "::error::the base image already has git - this test proves nothing"
+            exit 1
+          fi
+
+          # Expected to end at the token mint: the key is not the App's. What
+          # matters is how far it got first.
+          set +e
+          bash /pga/install.sh --install-id 145563826 --pem /pga/fake.pem \
+            </dev/null >/tmp/log 2>&1
+          set -e
+          cat /tmp/log
+
+          command -v git >/dev/null 2>&1 \
+            || { echo "::error::git was never installed"; exit 1; }
+          grep -q "Registered credential helper in /etc/gitconfig" /tmp/log \
+            || { echo "::error::install.sh died before registering the helper"; exit 1; }
+          test -x /usr/local/bin/git-credential-michelli \
+            || { echo "::error::the credential helper is not installed"; exit 1; }
+          echo "no-git box OK"
+          SH
+
+          docker run --rm -v "$PWD/out:/pga" debian:bookworm-slim \
+            bash /pga/ci-nogit-test.sh
+          rm -f out/fake.pem out/ci-nogit-test.sh
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
