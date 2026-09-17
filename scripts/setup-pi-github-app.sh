@@ -50,6 +50,11 @@ CONF_DST="$CONF_DIR/github-app.conf"
 
 TOKEN_BIN="/usr/local/bin/michelli-github-app-token"
 HELPER_BIN="/usr/local/bin/git-credential-michelli"
+FETCH_BIN="/usr/local/bin/fetch-release"
+# The service repos' release notes say `fetch_release <asset>`, with an
+# underscore, because it used to be a shell function you pasted. Both spellings
+# land so those instructions work verbatim on a box that has been through this.
+FETCH_ALIAS="/usr/local/bin/fetch_release"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -115,13 +120,17 @@ fi
 install -d -m 0755 "$CONF_DIR"
 
 # 3. Install helpers from the repo (this script lives in scripts/, helpers next to it).
-if [[ ! -f "$SCRIPT_DIR/michelli-github-app-token.sh" || ! -f "$SCRIPT_DIR/git-credential-michelli.sh" ]]; then
-  echo "Cannot find helper scripts alongside $SCRIPT_DIR — make sure you ran this from a repo checkout." >&2
-  exit 1
-fi
+for f in michelli-github-app-token.sh git-credential-michelli.sh fetch-release.sh; do
+  [[ -f "$SCRIPT_DIR/$f" ]] || {
+    echo "Cannot find $f alongside $SCRIPT_DIR — make sure you ran this from a repo checkout." >&2
+    exit 1
+  }
+done
 install -m 0755 "$SCRIPT_DIR/michelli-github-app-token.sh" "$TOKEN_BIN"
 install -m 0755 "$SCRIPT_DIR/git-credential-michelli.sh"   "$HELPER_BIN"
-echo "Installed $TOKEN_BIN and $HELPER_BIN"
+install -m 0755 "$SCRIPT_DIR/fetch-release.sh"             "$FETCH_BIN"
+ln -sf "$FETCH_BIN" "$FETCH_ALIAS"
+echo "Installed $TOKEN_BIN, $HELPER_BIN and $FETCH_BIN"
 
 # 4. Place / update conf. Write whenever an install ID was passed; otherwise
 # require an existing conf.
@@ -168,9 +177,10 @@ chmod 0644 /etc/gitconfig 2>/dev/null || true
 echo "Registered credential helper in /etc/gitconfig for github.com/GTMichelli-Dev"
 
 # 7. Smoke-test by minting a token and hitting ls-remote against a PRIVATE repo.
-# It must be private: foundation and the service repos went public, and
-# ls-remote against a public repo succeeds even with no credential helper at
-# all, so it would pass on a Pi where the App auth is entirely broken.
+# It must be private: pi-git-auth, web-print-service and scale-reader-service
+# are public, and ls-remote against a public repo succeeds even with no
+# credential helper at all, so it would pass on a Pi where the App auth is
+# entirely broken.
 SMOKE_REPO="pi-network-setup"
 echo
 echo "Smoke-testing..."

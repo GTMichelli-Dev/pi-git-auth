@@ -5,11 +5,11 @@ GTMichelli-Dev repo (`pi-network-setup`, `camera-capture-service`,
 `qb-sync-service`) authenticates through **one GitHub App** installed on the
 org. No personal access tokens, no SSH keys, no per-Pi GitHub accounts.
 
-`foundation`, `web-print-service`, `scale-reader-service` and this repo are
-public and clone with no credentials at all — worth knowing, because it makes
-them useless for testing whether any of this works, and because it is exactly
-why the bootstrap below can run on a Pi that cannot yet authenticate to
-anything.
+`web-print-service`, `scale-reader-service` and this repo are public and clone
+with no credentials at all — worth knowing, because it makes them useless for
+testing whether any of this works, and because it is exactly why the bootstrap
+below can run on a Pi that cannot yet authenticate to anything. `foundation`
+and `pi-network-setup` are private, so either one is a real test.
 
 **This repo is the single source of truth for the scripts and this document.**
 It lives on its own so every service repo can link to one copy instead of
@@ -78,6 +78,33 @@ The App has a private key (`.pem` file). On each Pi:
 End result: plain `git clone https://github.com/GTMichelli-Dev/<anything>.git`
 and `git pull` work silently from any user on the Pi. No PAT, no env vars, no
 SSH config, no group memberships to chase.
+
+## Downloading release packages: `fetch-release`
+
+The same token works for release assets, which git never sees — so the install
+also drops a `fetch-release` command (`/usr/local/bin/fetch-release`, with
+`fetch_release` beside it as a symlink):
+
+```bash
+fetch-release foundation-web-linux-x64.tar.gz          # from GTMichelli-Dev/foundation
+fetch-release --repo camera-capture-service linux-arm64.tar.gz
+fetch-release --version 1.36.0 foundation-web-linux-x64.tar.gz
+fetch-release --list                                   # what the latest release holds
+```
+
+It defaults to `GTMichelli-Dev/foundation`, accepts a full asset name or any
+ending unique within the release, and prints the release's asset list when the
+name matches nothing. Both spellings are installed because the service repos'
+release notes say `fetch_release <asset>` — that was a shell function you pasted
+into every session, and those instructions now work verbatim with nothing
+pasted.
+
+Token order: the App minter, then git's credential helper (asked *with* the repo
+path — see [Troubleshooting](#troubleshooting)), then `GH_TOKEN`/`GITHUB_TOKEN`,
+then it asks. So it also works from a workstation:
+`GH_TOKEN=$(gh auth token) fetch-release ...`.
+
+It needs `curl` and `jq`, both of which the installer puts on the box.
 
 ### Why so loose on the PEM perms
 
@@ -164,9 +191,9 @@ git ls-remote https://github.com/GTMichelli-Dev/pi-network-setup.git HEAD
 ```
 
 Should print a SHA and `HEAD` with no prompt. Test against a **private** repo
-— this repo and `foundation` are public and answer without the credential
-helper being involved at all, so they would succeed even on a Pi where this
-all failed. If it prompts for a username, see
+— this repo, `web-print-service` and `scale-reader-service` are public and
+answer without the credential helper being involved at all, so they would
+succeed even on a Pi where this all failed. If it prompts for a username, see
 [Troubleshooting](#troubleshooting).
 
 You can now `git clone` any GTMichelli-Dev repo on this Pi.
@@ -312,8 +339,9 @@ own and could not reach GitHub. Check the Pi's internet connection, and check
 does).
 
 **`ls-remote` succeeds but proves nothing** — check you didn't test against
-`pi-git-auth`, `foundation`, `web-print-service`, or `scale-reader-service`.
-They are public and answer without any credential helper involved.
+`pi-git-auth`, `web-print-service` or `scale-reader-service`. They are public
+and answer without any credential helper involved. `foundation` and
+`pi-network-setup` are private and do prove something.
 
 **`/etc/gitconfig` permission denied** — the system gitconfig was created
 with too-tight perms by an earlier bootstrap. Fix:
@@ -331,6 +359,8 @@ sudo chmod 0644 /etc/gitconfig
 | `/etc/michelli/github-app.conf` | 0644 | `CLIENT_ID=` / `APP_ID=` / `INSTALL_ID=` (public IDs only, not secret) |
 | `/usr/local/bin/michelli-github-app-token` | 0755 | Token minter — signs the JWT, exchanges it for an installation token, caches it |
 | `/usr/local/bin/git-credential-michelli` | 0755 | Git credential helper — calls the minter, formats output for git |
+| `/usr/local/bin/fetch-release` | 0755 | Downloads a release asset by name (git credentials do not cover these) |
+| `/usr/local/bin/fetch_release` | symlink | The spelling the service repos' release notes use |
 | `/etc/gitconfig` | 0644 | Registers the helper for `https://github.com/GTMichelli-Dev/*` (system-wide) |
 | `/tmp/michelli-gh-token-$UID` | 0600 | Per-user token cache (regenerated as needed; ephemeral) |
 
@@ -342,8 +372,9 @@ sudo chmod 0644 /etc/gitconfig
 | `scripts/setup-pi-github-app.sh` | The installer. Needs the two helpers beside it. |
 | `scripts/michelli-github-app-token.sh` | Token minter, installed to `/usr/local/bin`. |
 | `scripts/git-credential-michelli.sh` | Git credential helper, installed to `/usr/local/bin`. |
+| `scripts/fetch-release.sh` | Release-asset downloader, installed to `/usr/local/bin/fetch-release`. |
 | `scripts/pi-connect-github-auth.sh` | The older paste wrapper for the Pi Connect web shell: apt-installs `git`, clones this repo, then prompts. Superseded by `install.sh`, kept because links to it are in circulation. |
 
-Tag `v*` to publish a release carrying all five. The release job also runs
+Tag `v*` to publish a release carrying all six. The release job also runs
 `install.sh` end to end against a throwaway key, so a package that breaks the
 quick start fails in CI rather than on a Pi.

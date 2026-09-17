@@ -60,7 +60,8 @@ jobs:
           # The installer refuses to run without these beside it, so a tarball
           # missing one is a package that fails on the Pi rather than here.
           for f in install.sh setup-pi-github-app.sh michelli-github-app-token.sh \
-                   git-credential-michelli.sh pi-connect-github-auth.sh; do
+                   git-credential-michelli.sh fetch-release.sh \
+                   pi-connect-github-auth.sh; do
             test -f "out/$f" || { echo "::error::$f missing from the package"; exit 1; }
             bash -n "out/$f"  || { echo "::error::$f is not valid bash";        exit 1; }
           done
@@ -122,6 +123,8 @@ jobs:
           echo "install.sh OK - failed at the token mint, as an unknown key should"
 
       - name: Prove it works on a box with no git
+        env:
+          GH_TOKEN: ${{ github.token }}   # so fetch-release has something to authenticate with
         run: |
           set -euo pipefail
           # The runner has git, curl, jq and openssl preinstalled, so the step
@@ -153,10 +156,32 @@ jobs:
             || { echo "::error::install.sh died before registering the helper"; exit 1; }
           test -x /usr/local/bin/git-credential-michelli \
             || { echo "::error::the credential helper is not installed"; exit 1; }
+          test -x /usr/local/bin/fetch-release \
+            || { echo "::error::fetch-release is not installed"; exit 1; }
+          test -x /usr/local/bin/fetch_release \
+            || { echo "::error::the fetch_release spelling is missing"; exit 1; }
+
+          # Exercise fetch-release for real, against this repo's own previous
+          # release: the workflow token can read it, and it is the only private-
+          # repo-shaped thing CI can reach (the App PEM is not here). Covers the
+          # API call, the asset listing, suffix matching and the download.
+          fetch-release --repo pi-git-auth --list >/tmp/list 2>&1 || {
+            echo "::error::fetch-release --list failed"; cat /tmp/list; exit 1; }
+          cat /tmp/list
+          grep -q "setup-pi-github-app.sh" /tmp/list \
+            || { echo "::error::--list did not name the release's assets"; exit 1; }
+
+          cd /tmp
+          fetch_release --repo pi-git-auth credential-michelli.sh >/tmp/dl 2>&1 || {
+            echo "::error::fetch-release could not download by asset suffix"; cat /tmp/dl; exit 1; }
+          cat /tmp/dl
+          head -1 /tmp/git-credential-michelli.sh | grep -q "^#!" \
+            || { echo "::error::the downloaded asset is not the script"; exit 1; }
+
           echo "no-git box OK"
           SH
 
-          docker run --rm -v "$PWD/out:/pga" debian:bookworm-slim \
+          docker run --rm -e GH_TOKEN -v "$PWD/out:/pga" debian:bookworm-slim \
             bash /pga/ci-nogit-test.sh
           rm -f out/fake.pem out/ci-nogit-test.sh
 
@@ -193,6 +218,25 @@ jobs:
           No PEM file to get onto the box first, and no \`</dev/tty\` to
           remember: the prompts read the terminal directly. Re-run it any time
           to refresh the helpers or rotate the key.
+
+          ## What the box can do afterwards
+
+          \`git clone\` and \`git pull\` any private GTMichelli-Dev repo with no
+          prompt, and download release packages by name:
+
+          \`\`\`
+          fetch-release foundation-web-linux-x64.tar.gz
+          fetch-release --repo camera-capture-service linux-arm64.tar.gz
+          fetch-release --list
+          \`\`\`
+
+          \`fetch-release\` is installed to \`/usr/local/bin\` (as
+          \`fetch_release\` too, the spelling the service repos' release notes
+          use), and replaces the shell function those notes asked you to paste
+          into every new session. It defaults to
+          \`GTMichelli-Dev/foundation\`, takes an asset name or any unique
+          ending of one, pins with \`--version\`, and lists what a release holds
+          when you get the name wrong.
 
           For a scripted rollout, skip both prompts:
 
@@ -245,6 +289,7 @@ jobs:
             pi-git-auth.tar.gz \
             scripts/install.sh \
             scripts/setup-pi-github-app.sh \
+            scripts/fetch-release.sh \
             scripts/michelli-github-app-token.sh \
             scripts/git-credential-michelli.sh \
             scripts/pi-connect-github-auth.sh
