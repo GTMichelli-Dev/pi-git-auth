@@ -59,7 +59,7 @@ jobs:
 
           # The installer refuses to run without these beside it, so a tarball
           # missing one is a package that fails on the Pi rather than here.
-          for f in setup-pi-github-app.sh michelli-github-app-token.sh \
+          for f in install.sh setup-pi-github-app.sh michelli-github-app-token.sh \
                    git-credential-michelli.sh pi-connect-github-auth.sh; do
             test -f "out/$f" || { echo "::error::$f missing from the package"; exit 1; }
             bash -n "out/$f"  || { echo "::error::$f is not valid bash";        exit 1; }
@@ -85,7 +85,41 @@ jobs:
           grep -q '^APP_ID_DEFAULT="4260960"' out/setup-pi-github-app.sh \
             || { echo "::error::APP_ID_DEFAULT is not baked in"; exit 1; }
 
+          # install.sh offers the Installation ID as a pressable default; a
+          # missing one turns the one-shot back into something you look up.
+          grep -qE '^INSTALL_ID_DEFAULT="[0-9]+"' out/install.sh \
+            || { echo "::error::INSTALL_ID_DEFAULT is not baked into install.sh"; exit 1; }
+
           echo "Package OK"
+
+      - name: Prove install.sh runs unattended
+        run: |
+          set -euo pipefail
+          # A throwaway key, generated here and never leaving the runner. It is
+          # a structurally valid RSA key that GitHub has never heard of, which
+          # is exactly enough to exercise everything up to the token mint.
+          openssl genrsa -out /tmp/fake.pem 2048 2>/dev/null
+
+          # --pem skips the paste prompt, so this covers argument parsing, the
+          # key check and the hand-off to setup-pi-github-app.sh. The run is
+          # expected to fail at the smoke test - the key is not the App's, so
+          # GitHub rejects the JWT. Anything failing earlier is a real break,
+          # which is why each stage is asserted rather than the exit code.
+          set +e
+          sudo bash out/install.sh --install-id 145563826 --pem /tmp/fake.pem \
+            </dev/null >/tmp/install.log 2>&1
+          set -e
+          cat /tmp/install.log
+
+          grep -q "Key looks valid" /tmp/install.log \
+            || { echo "::error::install.sh did not validate the PEM"; exit 1; }
+          grep -q "michelli-github-app-token" /tmp/install.log \
+            || { echo "::error::install.sh never reached the helper install"; exit 1; }
+          test -f /etc/michelli/github-app.pem \
+            || { echo "::error::install.sh did not place the PEM"; exit 1; }
+
+          sudo shred -u /tmp/fake.pem /etc/michelli/github-app.pem
+          echo "install.sh OK - failed at the token mint, as an unknown key should"
 
       - name: Publish release
         env:
@@ -100,17 +134,37 @@ jobs:
           Full walkthrough:
           https://github.com/${GITHUB_REPOSITORY}/blob/main/README.md
 
-          ## Pi Connect web shell (one Pi, paste-only)
+          ## Install (one shot)
+
+          Two commands, on any Pi with an internet connection — including a Pi
+          OS Lite box with no \`git\`, and including Raspberry Pi Connect's web
+          shell:
 
           \`\`\`
-          curl -fsSL -o /tmp/gh-auth.sh https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/pi-connect-github-auth.sh
-          bash /tmp/gh-auth.sh </dev/tty
+          curl -fsSL -o /tmp/pga-install.sh https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh
+          bash /tmp/pga-install.sh
           \`\`\`
 
-          Asks for the Installation ID, takes the PEM as a paste, and runs the
-          installer for you.
+          It offers the Installation ID (\`145563826\`) as the default, takes
+          the App's PEM as a paste — BEGIN line to END line, nothing to
+          terminate — and does the rest itself: fetches the helpers, writes the
+          conf, registers the git credential helper, and smoke-tests against a
+          private repo.
 
-          ## From this release (curl, no git on the Pi yet)
+          No PEM file to get onto the box first, and no \`</dev/tty\` to
+          remember: the prompts read the terminal directly. Re-run it any time
+          to refresh the helpers or rotate the key.
+
+          For a scripted rollout, skip both prompts:
+
+          \`\`\`
+          sudo bash /tmp/pga-install.sh --install-id 145563826 --pem /tmp/michelli-app.pem
+          \`\`\`
+
+          ## The long way round
+
+          The tarball carries every script, and \`setup-pi-github-app.sh\` can
+          still be driven directly:
 
           \`\`\`
           curl -fsSL -o pga.tar.gz https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/pi-git-auth.tar.gz
@@ -118,12 +172,13 @@ jobs:
           sudo bash /tmp/pga/setup-pi-github-app.sh --install-id 145563826 --pem /path/to/michelli-app.pem
           \`\`\`
 
-          **Take the tarball, not a single script.**
+          **On this path, take the tarball rather than a single script.**
           \`setup-pi-github-app.sh\` installs \`michelli-github-app-token.sh\`
           and \`git-credential-michelli.sh\` from alongside itself and stops
-          with an error if they are not there. The individual scripts are
-          attached for reading, and for replacing one helper on a Pi that is
-          already set up.
+          with an error if they are not there. \`install.sh\` is the exception:
+          downloaded on its own, it fetches the tarball for you. The individual
+          scripts are attached for reading, and for replacing one helper on a
+          Pi that is already set up.
 
           ## Verify
 
@@ -149,6 +204,7 @@ jobs:
             --title "v$V" \
             --notes "$NOTES" \
             pi-git-auth.tar.gz \
+            scripts/install.sh \
             scripts/setup-pi-github-app.sh \
             scripts/michelli-github-app-token.sh \
             scripts/git-credential-michelli.sh \

@@ -21,16 +21,32 @@ point here from their release notes.
 
 ## Quick start
 
-A Pi you can paste into, and nothing else (Raspberry Pi Connect's web shell):
+Two commands on the Pi — a fresh Pi OS Lite box with no `git`, or Raspberry Pi
+Connect's web shell where pasting is all you can do:
 
 ```bash
-curl -fsSL -o /tmp/gh-auth.sh https://raw.githubusercontent.com/GTMichelli-Dev/pi-git-auth/main/scripts/pi-connect-github-auth.sh
-bash /tmp/gh-auth.sh </dev/tty
+curl -fsSL -o /tmp/pga-install.sh https://github.com/GTMichelli-Dev/pi-git-auth/releases/latest/download/install.sh
+bash /tmp/pga-install.sh
 ```
 
-It asks for the Installation ID, takes the PEM as a paste, and hands off to the
-real installer. Everything else on this page is the long way round, for when
-that does not fit.
+It offers the Installation ID as the default (press Enter), takes the PEM as a
+paste — BEGIN line to END line, with nothing to type to end it — and does the
+rest: fetches the helpers from the release, writes the conf, registers the
+credential helper, and smoke-tests against a private repo.
+
+Nothing to prepare on the Pi first: no PEM file copied over, no `git`, and no
+`</dev/tty` on the command line — the prompts read the terminal directly, so a
+bracketed paste can't run away with them. Re-run it any time to refresh the
+helpers or rotate the key.
+
+For a scripted rollout, skip both prompts:
+
+```bash
+sudo bash /tmp/pga-install.sh --install-id 145563826 --pem /tmp/michelli-app.pem
+```
+
+Everything else on this page is the long way round, for when that does not fit
+or when you want to watch each part happen.
 
 ## The App
 
@@ -158,9 +174,20 @@ You can now `git clone` any GTMichelli-Dev repo on this Pi.
 ## Bootstrap path B — from a release (no git on the Pi yet)
 
 Every [release](https://github.com/GTMichelli-Dev/pi-git-auth/releases/latest)
-carries the scripts as a tarball and individually. This is the path when the
-Pi has `curl` but not `git`, or when you want a pinned version rather than
-whatever `main` says today.
+carries `install.sh` on its own, the scripts as a tarball, and each script
+individually. This is the path when the Pi has `curl` but not `git`, or when
+you want a pinned version rather than whatever `main` says today.
+
+[Quick start](#quick-start) is this path with the prompts doing the work.
+`install.sh` pins with `--version`, so a fleet can be rolled out against one
+known release:
+
+```bash
+curl -fsSL -o /tmp/pga-install.sh https://github.com/GTMichelli-Dev/pi-git-auth/releases/download/v1.1.0/install.sh
+bash /tmp/pga-install.sh --version 1.1.0
+```
+
+Driving `setup-pi-github-app.sh` yourself, with the PEM already on the box:
 
 ```bash
 curl -fsSL -o pga.tar.gz https://github.com/GTMichelli-Dev/pi-git-auth/releases/latest/download/pi-git-auth.tar.gz
@@ -168,12 +195,14 @@ mkdir -p /tmp/pga && tar -xzf pga.tar.gz -C /tmp/pga
 sudo bash /tmp/pga/setup-pi-github-app.sh --install-id 145563826 --pem /path/to/michelli-app.pem
 ```
 
-Take the **tarball**, not a single script. `setup-pi-github-app.sh` installs
-`michelli-github-app-token.sh` and `git-credential-michelli.sh` from
-alongside itself and stops with an error if they are not there, so a lone
-`setup-pi-github-app.sh` cannot do the job. The individual scripts are
-published for reading and for replacing one helper on a Pi that is already
-set up.
+On that last path take the **tarball**, not a single script.
+`setup-pi-github-app.sh` installs `michelli-github-app-token.sh` and
+`git-credential-michelli.sh` from alongside itself and stops with an error if
+they are not there, so a lone `setup-pi-github-app.sh` cannot do the job.
+`install.sh` is the exception — downloaded on its own it fetches the tarball
+for you, which is why the quick start is a single asset. The other scripts are
+published for reading and for replacing one helper on a Pi that is already set
+up.
 
 ## Bootstrap path C — scp from your laptop (fleet rollout)
 
@@ -273,8 +302,14 @@ Common failures:
 
 **`Cannot find helper scripts alongside ...`** — you downloaded
 `setup-pi-github-app.sh` on its own. It needs the two helpers beside it; take
-`pi-git-auth.tar.gz` from the release instead. See
+`install.sh`, which fetches them itself, or `pi-git-auth.tar.gz` from the
+release. See
 [Bootstrap path B](#bootstrap-path-b--from-a-release-no-git-on-the-pi-yet).
+
+**`Could not download ...pi-git-auth.tar.gz`** — `install.sh` was run on its
+own and could not reach GitHub. Check the Pi's internet connection, and check
+`--version` names a release that exists (`latest` is the default and always
+does).
 
 **`ls-remote` succeeds but proves nothing** — check you didn't test against
 `pi-git-auth`, `foundation`, `web-print-service`, or `scale-reader-service`.
@@ -303,9 +338,12 @@ sudo chmod 0644 /etc/gitconfig
 
 | Path | Purpose |
 |---|---|
+| `scripts/install.sh` | The one-shot front door. Prompts for the Installation ID and PEM, fetches the rest from the release if it is alone, hands off to the installer. |
 | `scripts/setup-pi-github-app.sh` | The installer. Needs the two helpers beside it. |
 | `scripts/michelli-github-app-token.sh` | Token minter, installed to `/usr/local/bin`. |
 | `scripts/git-credential-michelli.sh` | Git credential helper, installed to `/usr/local/bin`. |
-| `scripts/pi-connect-github-auth.sh` | Paste-driven wrapper for the Pi Connect web shell. |
+| `scripts/pi-connect-github-auth.sh` | The older paste wrapper for the Pi Connect web shell: apt-installs `git`, clones this repo, then prompts. Superseded by `install.sh`, kept because links to it are in circulation. |
 
-Tag `v*` to publish a release carrying all four.
+Tag `v*` to publish a release carrying all five. The release job also runs
+`install.sh` end to end against a throwaway key, so a package that breaks the
+quick start fails in CI rather than on a Pi.
