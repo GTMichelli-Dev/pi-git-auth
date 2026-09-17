@@ -82,14 +82,27 @@ done
 # the credential helper is registered for https://github.com/GTMichelli-Dev, and
 # git only consults a path-scoped credential config when the request carries a
 # matching path - a bare host=github.com query silently matches nothing.
-TOKEN="$(michelli-github-app-token 2>/dev/null)" \
-  || TOKEN="$(printf 'protocol=https\nhost=github.com\npath=%s.git\n\n' "$REPO" \
-       | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null \
-       | sed -n 's/^password=//p')"
+#
+# Every source ends in `|| true`, and each is guarded by the previous one
+# coming back empty rather than by its exit status. Chaining them with `||`
+# instead reads fine and is a trap: under `set -o pipefail` a failing
+# `git credential fill` fails its whole pipeline, which fails the assignment,
+# which `set -e` turns into a silent exit - no message, nothing tried after it.
+# That is precisely the case where a token is most needed: a box whose minter is
+# installed but broken.
+TOKEN="$(michelli-github-app-token 2>/dev/null || true)"
+
+if [[ -z "$TOKEN" ]]; then
+  TOKEN="$(printf 'protocol=https\nhost=github.com\npath=%s.git\n\n' "$REPO" \
+             | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null \
+             | sed -n 's/^password=//p' || true)"
+fi
 
 # Env last of the silent sources, for a workstation with no helper set up:
-#   GH_TOKEN=\$(gh auth token) fetch-release foundation-web-linux-x64.tar.gz
-[[ -n "$TOKEN" ]] || TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+#   GH_TOKEN=$(gh auth token) fetch-release foundation-web-linux-x64.tar.gz
+if [[ -z "$TOKEN" ]]; then
+  TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+fi
 
 if [[ -z "$TOKEN" ]]; then
   if [[ -r /dev/tty ]]; then
