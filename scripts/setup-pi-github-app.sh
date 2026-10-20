@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # setup-pi-github-app.sh — install the Michelli GitHub App credential helper
-# on a Raspberry Pi. After this runs once, plain `git clone https://github.com/
+# on a Raspberry Pi, or on a Debian/Ubuntu cloud VM (Vultr etc.) — nothing in
+# it is Pi-specific. After this runs once, plain `git clone https://github.com/
 # GTMichelli-Dev/...` and `git pull` work silently against any private repo
-# the App is installed on (foundation, web-print-service, pi-network-setup,
-# camera-capture-service, scale-reader-service, qb-sync-service, ...).
+# the App is installed on (foundation, pi-network-setup,
+# camera-capture-service, qb-sync-service, ...).
 #
 # Full walkthrough, including creating the GitHub App the first time:
 # README.md in the pi-git-auth repo.
@@ -15,8 +16,9 @@
 #            --install-id <INSTALL_ID> \
 #            --pem /tmp/michelli-app.pem
 #   3. Verify: `git ls-remote https://github.com/GTMichelli-Dev/pi-network-setup.git`
-#      succeeds with no prompt. Test against a PRIVATE repo — foundation and
-#      the service repos are public and succeed without any auth at all.
+#      succeeds with no prompt. Test against a PRIVATE repo — pi-git-auth,
+#      web-print-service and scale-reader-service are public and succeed
+#      without any auth at all.
 #   4. Shred the source PEM: `shred -u /tmp/michelli-app.pem`
 #
 # Idempotent. Re-running re-installs the helpers (picks up newer versions
@@ -109,10 +111,29 @@ command -v curl    >/dev/null 2>&1 || need_apt+=(curl)
 command -v jq      >/dev/null 2>&1 || need_apt+=(jq)
 command -v openssl >/dev/null 2>&1 || need_apt+=(openssl)
 command -v git     >/dev/null 2>&1 || need_apt+=(git)
+#
+#    A freshly created cloud VM (Vultr, etc.) is still running cloud-init and
+#    unattended-upgrades for its first few minutes, and they hold the apt lock
+#    — so a tech who SSHes straight in hits "Could not get lock" and the whole
+#    install dies. Wait for the lock instead, and keep Ubuntu's needrestart
+#    from stopping on a "which services should be restarted?" dialog.
 if [[ ${#need_apt[@]} -gt 0 ]]; then
   echo "Installing: ${need_apt[*]}"
-  apt-get update -qq
-  apt-get install -y -qq "${need_apt[@]}"
+  export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+  APT_WAIT=(-o DPkg::Lock::Timeout=600)
+  for attempt in 1 2 3 4 5 6; do
+    if apt-get "${APT_WAIT[@]}" update -qq \
+       && apt-get "${APT_WAIT[@]}" install -y -qq "${need_apt[@]}"; then
+      break
+    fi
+    if [[ $attempt -eq 6 ]]; then
+      echo "apt-get could not install ${need_apt[*]}. If another apt run is still" >&2
+      echo "going (common on a VM that booted minutes ago), wait for it and re-run." >&2
+      exit 1
+    fi
+    echo "apt is busy or failed (attempt $attempt of 6) — retrying in 20s..."
+    sleep 20
+  done
 fi
 
 # 2. Conf dir — world-traversable so the helper running as a regular user can
@@ -196,5 +217,6 @@ if git ls-remote "https://github.com/GTMichelli-Dev/$SMOKE_REPO.git" HEAD >/dev/
   echo "git ls-remote succeeded against the private $SMOKE_REPO repo. Setup done."
 else
   echo "git ls-remote failed — check App permissions (Contents: Read) and Installation repo selection." >&2
+  echo "Also check the box can reach github.com on port 443 (outbound HTTPS is all this needs)." >&2
   exit 1
 fi

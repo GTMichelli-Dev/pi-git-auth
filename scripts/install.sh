@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# install.sh — one-shot bootstrap of Michelli GitHub App git auth on a Pi.
+# install.sh — one-shot bootstrap of Michelli GitHub App git auth on a Pi or a
+# Debian/Ubuntu cloud VM (Vultr etc.). On a VM, prefer --pem with a key copied
+# up by scp: the provider's browser console cannot paste a PEM reliably.
 #
 # This is the single-command path: it asks for the Installation ID (with the
 # current one as the default) and the App's PEM, then does everything else —
@@ -110,8 +112,12 @@ if [[ -n "$SCRIPT_DIR" \
 else
   command -v curl >/dev/null 2>&1 || {
     echo "Installing curl..."
-    $SUDO apt-get update -y -qq
-    $SUDO apt-get install -y -qq curl
+    # Lock timeout: a VM that booted minutes ago is often still running
+    # unattended-upgrades. See setup-pi-github-app.sh step 1.
+    $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+      apt-get -o DPkg::Lock::Timeout=600 update -y -qq
+    $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+      apt-get -o DPkg::Lock::Timeout=600 install -y -qq curl
   }
 
   if [[ "$VERSION" == "latest" ]]; then
@@ -201,7 +207,8 @@ $SUDO bash "$SRC_DIR/setup-pi-github-app.sh" \
   --pem "$PEM_SRC"
 
 echo
-echo "Done. This Pi can now clone private GTMichelli-Dev repos."
+echo "Done. This box can now clone private GTMichelli-Dev repos, and"
+echo "download release packages with: fetch-release --list"
 if [[ -n "$PEM_TMP" ]]; then
   echo "The pasted key was shredded from /tmp; the installed copy lives at"
   echo "/etc/michelli/github-app.pem."
