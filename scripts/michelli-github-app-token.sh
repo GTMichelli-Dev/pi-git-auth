@@ -47,9 +47,13 @@ fi
 b64url() { base64 -w0 | tr -d '=' | tr '/+' '_-'; }
 
 NOW=$(date +%s)
+# Backdate iat by 60s, as GitHub recommends: a clock even slightly ahead of
+# GitHub's (a Pi with no RTC before NTP catches up, a VM just restored from a
+# snapshot) otherwise gets "'Issued at' claim must be ... in the past".
+JWT_IAT=$((NOW - 60))
 JWT_EXP=$((NOW + 540))   # max 600s; 540 leaves margin for clock skew
 HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
-PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$NOW" "$JWT_EXP" "$ISSUER" | b64url)
+PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$JWT_IAT" "$JWT_EXP" "$ISSUER" | b64url)
 SIG=$(printf '%s.%s' "$HEADER" "$PAYLOAD" | openssl dgst -sha256 -sign "$PEM" | b64url)
 JWT="$HEADER.$PAYLOAD.$SIG"
 

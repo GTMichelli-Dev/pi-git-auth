@@ -19,10 +19,16 @@ keeping its own. The service repos —
 [scale-reader-service](https://github.com/GTMichelli-Dev/scale-reader-service) —
 point here from their release notes.
 
+**Which section do I follow?**
+
+- Raspberry Pi → [Quick start](#quick-start), right below.
+- Vultr server, or any other Debian/Ubuntu cloud VM →
+  [Install on a Vultr server](#install-on-a-vultr-server-or-any-debianubuntu-cloud-vm).
+
 ## Quick start
 
-Two commands on the Pi — a fresh Pi OS Lite box with no `git`, or Raspberry Pi
-Connect's web shell where pasting is all you can do:
+**On a Raspberry Pi**, two commands — a fresh Pi OS Lite box with no `git`, or
+Raspberry Pi Connect's web shell where pasting is all you can do:
 
 ```bash
 curl -fsSL -o /tmp/pga-install.sh https://github.com/GTMichelli-Dev/pi-git-auth/releases/latest/download/install.sh
@@ -45,8 +51,130 @@ For a scripted rollout, skip both prompts:
 sudo bash /tmp/pga-install.sh --install-id 145563826 --pem /tmp/michelli-app.pem
 ```
 
-Everything else on this page is the long way round, for when that does not fit
-or when you want to watch each part happen.
+Installing on a cloud server rather than a Pi? Use the next section instead —
+it is the same installer, but the PEM goes up a different way.
+
+Everything after that is the long way round, for when that does not fit or
+when you want to watch each part happen.
+
+## Install on a Vultr server (or any Debian/Ubuntu cloud VM)
+
+Despite the name, nothing here is Pi-specific: no `pi` user, no ARM, no
+hardware. On a Vultr box it runs as `root` and works the same as on a Pi. What
+it gives the server is the ability to `git clone` private GTMichelli-Dev repos
+and to download release packages
+(`fetch-release foundation-web-linux-x64.tar.gz`).
+
+**What this does *not* need** — the things people go looking for on a server:
+
+- **No open ports, no firewall rules.** It only makes *outgoing* HTTPS (443)
+  calls to `github.com` and `api.github.com`. Vultr's default firewall group
+  and `ufw` both allow outgoing traffic, so leave them as they are.
+- **No domain name, DNS record or TLS certificate.** Those belong to whatever
+  app you install afterwards (e.g. foundation), not to this.
+- **No systemd service, nothing running in the background.** It installs three
+  small commands and one line of git config. Tokens are minted on demand,
+  whenever git or `fetch-release` asks.
+- **No GitHub account, PAT or SSH key on the server.**
+
+### What you need
+
+| Item | Where it comes from |
+|---|---|
+| A Vultr instance running **Ubuntu 22.04/24.04 x64 or Debian 12 x64** | Vultr dashboard. Any size; the cheapest plan is fine for this part. |
+| The server's **public IP** and **root password** (or your SSH key on it) | The instance's *Overview* page in Vultr. |
+| The App's private key, **`michelli-app.pem`** | Your laptop or password manager (see [What you need before bootstrapping](#what-you-need-before-bootstrapping-a-pi)). This is the only secret. |
+| The Installation ID | Nothing to look up — `145563826` is built in; press Enter at the prompt. |
+
+Do this from **SSH on your own computer** (Windows Terminal / PowerShell,
+macOS Terminal), *not* Vultr's "View Console" in the browser. The browser
+console types pasted text one key at a time and mangles a multi-line key.
+
+### Steps
+
+Replace `203.0.113.10` with your server's IP throughout.
+
+**1. Copy the key up to the server** — run this **on your computer**, in the
+folder where `michelli-app.pem` is:
+
+```bash
+scp michelli-app.pem root@203.0.113.10:/root/michelli-app.pem
+```
+
+(First connection asks *"Are you sure you want to continue connecting?"* —
+type `yes`. Then the root password.)
+
+**2. Log in to the server:**
+
+```bash
+ssh root@203.0.113.10
+```
+
+**3. Run the installer** — one line, on the server:
+
+```bash
+curl -fsSL -o /tmp/pga-install.sh https://github.com/GTMichelli-Dev/pi-git-auth/releases/latest/download/install.sh && bash /tmp/pga-install.sh --pem /root/michelli-app.pem
+```
+
+It asks one question — the Installation ID — press **Enter** to take the
+default. Add `--install-id 145563826` to the line to skip even that.
+
+On a server created in the last few minutes, the installer may sit at
+`Installing: git jq ...` for a while: Ubuntu is still running its first-boot
+updates and the installer waits for them rather than failing. Let it run.
+
+**4. Check the output** includes this line near the end — that is the
+installer proving it can reach a private repo:
+
+```
+git ls-remote succeeded against the private pi-network-setup repo. Setup done.
+```
+
+If it stops with an error instead, look it up in
+[Vultr troubleshooting](#vultr-troubleshooting) below.
+
+**5. Delete the copy of the key you uploaded** (the installed copy stays at
+`/etc/michelli/github-app.pem`):
+
+```bash
+shred -u /root/michelli-app.pem
+```
+
+**6. Prove it works**, any time:
+
+```bash
+git ls-remote https://github.com/GTMichelli-Dev/foundation.git HEAD
+```
+
+```bash
+fetch-release --list
+```
+
+The first prints a long hex SHA and `HEAD` without asking for a username; the
+second lists the latest foundation release's packages. On a Vultr x64 server
+take the `linux-x64` packages, not `linux-arm64` (those are for Pis).
+
+No `scp`? Skip step 1 and run step 3 without `--pem`: it then asks you to paste
+the key. Paste the whole thing, BEGIN line to END line, into your SSH window
+(right-click pastes in Windows Terminal/PuTTY); it stops by itself at the END
+line.
+
+Other users on the box (a service account that runs the app, say) get the same
+access with nothing extra to do — the setup is system-wide.
+
+### Vultr troubleshooting
+
+| You see | Fix |
+|---|---|
+| `scp: ... Permission denied` / `Connection refused` | Wrong IP or password, or the instance is still booting. Check the IP on the Vultr *Overview* page; wait a minute after it shows "Running". |
+| `Could not get lock /var/lib/dpkg/lock-frontend` or `apt is busy ... retrying` | First-boot updates are still running. The installer waits and retries for several minutes; if it gives up, wait and run step 3 again. |
+| `That is not a valid RSA private key` | The key was mangled on the way up — usually pasted through the browser console. Use `scp` (step 1). |
+| `token mint failed` mentioning `'Issued at' claim` or `expiration time` | The server clock is wrong. `timedatectl` should show `System clock synchronized: yes`; if not, run `timedatectl set-ntp true`, wait a minute, re-run step 3. |
+| `token mint failed ... Bad credentials` | Wrong `.pem` (another App's, or a revoked key). Get the current one. |
+| `git ls-remote failed` / `Could not resolve host` / timeouts | The server cannot reach GitHub. `curl -sI https://api.github.com` should print `HTTP/2 200`. If not, check nobody added an *outbound* block to the Vultr firewall group. |
+| Prompts for `Username for 'https://github.com'` | See [Troubleshooting](#troubleshooting) — run `michelli-github-app-token` to see the real error. |
+
+Re-running step 3 is always safe; it just installs over the top.
 
 ## The App
 

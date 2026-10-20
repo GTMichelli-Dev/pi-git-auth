@@ -181,8 +181,13 @@ jobs:
           echo "no-git box OK"
           SH
 
-          docker run --rm -e GH_TOKEN -v "$PWD/out:/pga" debian:bookworm-slim \
-            bash /pga/ci-nogit-test.sh
+          # Debian for the Pi fleet; Ubuntu 24.04 because it is what a fresh
+          # Vultr server runs, as root with no sudo - the same as this container.
+          for image in debian:bookworm-slim ubuntu:24.04; do
+            echo "== $image =="
+            docker run --rm -e GH_TOKEN -v "$PWD/out:/pga" "$image" \
+              bash /pga/ci-nogit-test.sh
+          done
           rm -f out/fake.pem out/ci-nogit-test.sh
 
       - name: Publish release
@@ -218,6 +223,20 @@ jobs:
           No PEM file to get onto the box first, and no \`</dev/tty\` to
           remember: the prompts read the terminal directly. Re-run it any time
           to refresh the helpers or rotate the key.
+
+          ## On a Vultr server (or any Debian/Ubuntu cloud VM)
+
+          Same installer, run as root over SSH. Copy the key up with \`scp\`
+          rather than pasting it into the provider's browser console, which
+          mangles it. No ports, firewall rules, DNS or TLS are involved — it
+          only makes outgoing HTTPS calls to GitHub. Step by step:
+          https://github.com/${GITHUB_REPOSITORY}/blob/main/README.md#install-on-a-vultr-server-or-any-debianubuntu-cloud-vm
+
+          \`\`\`
+          scp michelli-app.pem root@<server-ip>:/root/michelli-app.pem
+          ssh root@<server-ip>
+          curl -fsSL -o /tmp/pga-install.sh https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh && bash /tmp/pga-install.sh --pem /root/michelli-app.pem
+          \`\`\`
 
           ## What the box can do afterwards
 
@@ -270,10 +289,10 @@ jobs:
           \`\`\`
 
           A SHA with no password prompt means it worked. Test against a
-          **private** repo — this one, \`foundation\`, \`web-print-service\`
-          and \`scale-reader-service\` are public and answer without the
-          credential helper being involved at all, so they succeed even on a
-          Pi where the whole thing failed.
+          **private** repo (\`pi-network-setup\` or \`foundation\`) — this one,
+          \`web-print-service\` and \`scale-reader-service\` are public and
+          answer without the credential helper being involved at all, so they
+          succeed even on a box where the whole thing failed.
 
           ---
 
